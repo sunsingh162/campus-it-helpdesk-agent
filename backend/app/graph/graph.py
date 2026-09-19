@@ -1,49 +1,36 @@
-"""Session 1: routing skeleton.
+"""Session 2: tool binding.
 
-classify_node categorizes an incoming ticket, then conditional routing sends
-it to a category-specific stub handler. Each later session replaces one stub
-(or adds a capability around this skeleton) without touching the others.
+The category-specific stub handlers from Session 1 are replaced by a single
+agent_node that can call bound tools (mock CRM lookup + mock KB search) via
+a LangGraph ToolNode, looping between agent and tools until it has enough
+information to answer. classify_node is unchanged — it still sets the
+category used to steer the agent's system prompt.
 """
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.prebuilt import ToolNode, tools_condition
 
+from .nodes.agent import TOOLS, agent_node, finalize_node
 from .nodes.classify import classify_node
-from .nodes.stubs import (
-    account_stub,
-    hardware_stub,
-    network_stub,
-    password_stub,
-    unknown_stub,
-)
 from .state import TicketState
-
-STUB_NODES = {
-    "password": "password_stub",
-    "network": "network_stub",
-    "hardware": "hardware_stub",
-    "account": "account_stub",
-    "unknown": "unknown_stub",
-}
-
-
-def route_by_category(state: TicketState) -> str:
-    return STUB_NODES[state["category"]]
 
 
 def build_graph():
     graph = StateGraph(TicketState)
 
     graph.add_node("classify", classify_node)
-    graph.add_node("password_stub", password_stub)
-    graph.add_node("network_stub", network_stub)
-    graph.add_node("hardware_stub", hardware_stub)
-    graph.add_node("account_stub", account_stub)
-    graph.add_node("unknown_stub", unknown_stub)
+    graph.add_node("agent", agent_node)
+    graph.add_node("tools", ToolNode(TOOLS))
+    graph.add_node("finalize", finalize_node)
 
     graph.add_edge(START, "classify")
-    graph.add_conditional_edges("classify", route_by_category, list(STUB_NODES.values()))
-
-    for node_name in STUB_NODES.values():
-        graph.add_edge(node_name, END)
+    graph.add_edge("classify", "agent")
+    graph.add_conditional_edges(
+        "agent",
+        tools_condition,
+        {"tools": "tools", END: "finalize"},
+    )
+    graph.add_edge("tools", "agent")
+    graph.add_edge("finalize", END)
 
     return graph.compile()

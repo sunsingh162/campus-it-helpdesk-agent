@@ -1,5 +1,6 @@
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
+from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
 Category = Literal["password", "network", "hardware", "account", "unknown"]
@@ -12,3 +13,4 @@ class TicketState(TypedDict):
     ticket_text: str
     category: Optional[Category]
     response: Optional[str]
+    messages: Annotated[list, add_messages]
