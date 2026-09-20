@@ -1,16 +1,16 @@
-"""Session 2: tool binding.
+"""Session 3: the ReAct loop.
 
-The category-specific stub handlers from Session 1 are replaced by a single
-agent_node that can call bound tools (mock CRM lookup + mock KB search) via
-a LangGraph ToolNode, looping between agent and tools until it has enough
-information to answer. classify_node is unchanged — it still sets the
-category used to steer the agent's system prompt.
+agent_node is now a real ReAct loop with a hard MAX_ITERATIONS cap and
+duplicate-tool-call fingerprinting: instead of relying on the LLM to decide
+when to stop, the graph enforces a circuit breaker and escalates. Routing
+after the agent is custom (route_after_agent) rather than the prebuilt
+tools_condition, since it also has to check the escalated flag.
 """
 
 from langgraph.graph import END, START, StateGraph
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.prebuilt import ToolNode
 
-from .nodes.agent import TOOLS, agent_node, finalize_node
+from .nodes.agent import TOOLS, agent_node, finalize_node, route_after_agent
 from .nodes.classify import classify_node
 from .state import TicketState
 
@@ -27,8 +27,8 @@ def build_graph():
     graph.add_edge("classify", "agent")
     graph.add_conditional_edges(
         "agent",
-        tools_condition,
-        {"tools": "tools", END: "finalize"},
+        route_after_agent,
+        {"tools": "tools", "finalize": "finalize"},
     )
     graph.add_edge("tools", "agent")
     graph.add_edge("finalize", END)

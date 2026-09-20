@@ -21,6 +21,9 @@ def _run(ticket_text: str) -> dict:
             "category": None,
             "response": None,
             "messages": [],
+            "iteration_count": 0,
+            "seen_tool_calls": [],
+            "escalated": False,
         }
     )
 

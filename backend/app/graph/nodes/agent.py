@@ -1,13 +1,17 @@
+import json
 import os
 
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from ...tools.crm import lookup_student_account
 from ...tools.kb import search_kb
+from ...tools.severity import assess_severity
 from ..state import TicketState
 
-TOOLS = [lookup_student_account, search_kb]
+TOOLS = [lookup_student_account, search_kb, assess_severity]
+
+MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "6"))
 
 _llm: ChatAnthropic | None = None
 
@@ -24,14 +28,37 @@ def get_agent_llm() -> ChatAnthropic:
 SYSTEM_PROMPT = (
     "You are a campus IT helpdesk assistant handling a '{category}' ticket. "
     "Use lookup_student_account to check the student's account/device status "
-    "when a student ID is available or relevant, and use search_kb to find "
-    "troubleshooting steps before answering. Give one concise, helpful final "
-    "response once you have what you need — do not call the same tool with "
-    "the same arguments more than once."
+    "when a student ID is available or relevant, use search_kb to find "
+    "troubleshooting steps, and use assess_severity once you understand the "
+    "request to determine how urgent/sensitive it is. Give one concise, "
+    "helpful final response once you have what you need — do not call the "
+    "same tool with the same arguments more than once."
 )
 
 
+def _fingerprint(tool_call: dict) -> str:
+    return f"{tool_call['name']}:{json.dumps(tool_call['args'], sort_keys=True)}"
+
+
+def _escalation_message(reason: str) -> AIMessage:
+    return AIMessage(
+        content=(
+            "[circuit-breaker] This ticket needs a human agent — "
+            f"{reason} Escalating instead of continuing automatically."
+        )
+    )
+
+
 def agent_node(state: TicketState) -> dict:
+    iteration = state.get("iteration_count", 0) + 1
+
+    if iteration > MAX_ITERATIONS:
+        return {
+            "messages": [_escalation_message(f"the agent hit its {MAX_ITERATIONS}-step iteration cap")],
+            "iteration_count": iteration,
+            "escalated": True,
+        }
+
     llm_with_tools = get_agent_llm().bind_tools(TOOLS)
     existing_messages = state.get("messages") or []
 
@@ -40,11 +67,38 @@ def agent_node(state: TicketState) -> dict:
             SystemMessage(content=SYSTEM_PROMPT.format(category=state["category"])),
             HumanMessage(content=state["ticket_text"]),
         ]
-        ai_message = llm_with_tools.invoke(existing_messages)
-        return {"messages": existing_messages + [ai_message]}
 
     ai_message = llm_with_tools.invoke(existing_messages)
-    return {"messages": [ai_message]}
+
+    if ai_message.tool_calls:
+        seen = state.get("seen_tool_calls", [])
+        fingerprints = [_fingerprint(tc) for tc in ai_message.tool_calls]
+        if any(fp in seen for fp in fingerprints):
+            new_messages = [ai_message] if state.get("messages") else existing_messages + [ai_message]
+            return {
+                "messages": new_messages
+                + [_escalation_message("it repeated an identical tool call")],
+                "iteration_count": iteration,
+                "escalated": True,
+            }
+        return_messages = [ai_message] if state.get("messages") else existing_messages + [ai_message]
+        return {
+            "messages": return_messages,
+            "iteration_count": iteration,
+            "seen_tool_calls": seen + fingerprints,
+        }
+
+    return_messages = [ai_message] if state.get("messages") else existing_messages + [ai_message]
+    return {"messages": return_messages, "iteration_count": iteration}
+
+
+def route_after_agent(state: TicketState) -> str:
+    if state.get("escalated"):
+        return "finalize"
+    last_message = state["messages"][-1]
+    if isinstance(last_message, AIMessage) and last_message.tool_calls:
+        return "tools"
+    return "finalize"
 
 
 def finalize_node(state: TicketState) -> dict:

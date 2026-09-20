@@ -14,3 +14,6 @@ class TicketState(TypedDict):
     category: Optional[Category]
     response: Optional[str]
     messages: Annotated[list, add_messages]
+    iteration_count: int
+    seen_tool_calls: list[str]
+    escalated: bool
