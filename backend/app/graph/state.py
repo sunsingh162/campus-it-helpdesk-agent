@@ -18,6 +18,7 @@ class TicketState(TypedDict):
     iteration_count: int
     seen_tool_calls: list[str]
     escalated: bool
+    summary: Optional[str]
 
 
 def new_turn_state(thread_id: str, ticket_text: str) -> TicketState:
@@ -38,4 +39,5 @@ def new_turn_state(thread_id: str, ticket_text: str) -> TicketState:
         "iteration_count": 0,
         "seen_tool_calls": [],
         "escalated": False,
+        "summary": None,
     }

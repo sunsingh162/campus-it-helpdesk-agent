@@ -36,6 +36,16 @@ SYSTEM_PROMPT = (
 )
 
 
+def _system_prompt(category: str, summary: str | None) -> str:
+    prompt = SYSTEM_PROMPT.format(category=category)
+    if summary:
+        prompt += (
+            "\n\nSummary of earlier parts of this conversation (the original "
+            f"messages were trimmed to save space): {summary}"
+        )
+    return prompt
+
+
 def _fingerprint(tool_call: dict) -> str:
     return f"{tool_call['name']}:{json.dumps(tool_call['args'], sort_keys=True)}"
 
@@ -69,7 +79,7 @@ def agent_node(state: TicketState) -> dict:
 
     llm_with_tools = get_agent_llm().bind_tools(TOOLS)
     persisted_messages = state.get("messages") or []
-    system_message = SystemMessage(content=SYSTEM_PROMPT.format(category=state["category"]))
+    system_message = SystemMessage(content=_system_prompt(state["category"], state.get("summary")))
     ai_message = llm_with_tools.invoke([system_message] + persisted_messages)
 
     if ai_message.tool_calls:
