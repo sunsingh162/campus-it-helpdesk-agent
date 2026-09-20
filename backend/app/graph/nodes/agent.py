@@ -2,7 +2,7 @@ import json
 import os
 
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, SystemMessage
 
 from ...tools.crm import lookup_student_account
 from ...tools.kb import search_kb
@@ -50,6 +50,14 @@ def _escalation_message(reason: str) -> AIMessage:
 
 
 def agent_node(state: TicketState) -> dict:
+    """Runs one ReAct step.
+
+    The system prompt is regenerated from the current category on every call
+    and never persisted into state["messages"] — only Human/AI/Tool messages
+    are persisted, so a checkpointed conversation is a plain transcript, and
+    a follow-up turn on a different category doesn't leave a stale system
+    message from an earlier topic sitting in history.
+    """
     iteration = state.get("iteration_count", 0) + 1
 
     if iteration > MAX_ITERATIONS:
@@ -60,36 +68,26 @@ def agent_node(state: TicketState) -> dict:
         }
 
     llm_with_tools = get_agent_llm().bind_tools(TOOLS)
-    existing_messages = state.get("messages") or []
-
-    if not existing_messages:
-        existing_messages = [
-            SystemMessage(content=SYSTEM_PROMPT.format(category=state["category"])),
-            HumanMessage(content=state["ticket_text"]),
-        ]
-
-    ai_message = llm_with_tools.invoke(existing_messages)
+    persisted_messages = state.get("messages") or []
+    system_message = SystemMessage(content=SYSTEM_PROMPT.format(category=state["category"]))
+    ai_message = llm_with_tools.invoke([system_message] + persisted_messages)
 
     if ai_message.tool_calls:
         seen = state.get("seen_tool_calls", [])
         fingerprints = [_fingerprint(tc) for tc in ai_message.tool_calls]
         if any(fp in seen for fp in fingerprints):
-            new_messages = [ai_message] if state.get("messages") else existing_messages + [ai_message]
             return {
-                "messages": new_messages
-                + [_escalation_message("it repeated an identical tool call")],
+                "messages": [ai_message, _escalation_message("it repeated an identical tool call")],
                 "iteration_count": iteration,
                 "escalated": True,
             }
-        return_messages = [ai_message] if state.get("messages") else existing_messages + [ai_message]
         return {
-            "messages": return_messages,
+            "messages": [ai_message],
             "iteration_count": iteration,
             "seen_tool_calls": seen + fingerprints,
         }
 
-    return_messages = [ai_message] if state.get("messages") else existing_messages + [ai_message]
-    return {"messages": return_messages, "iteration_count": iteration}
+    return {"messages": [ai_message], "iteration_count": iteration}
 
 
 def route_after_agent(state: TicketState) -> str:
@@ -102,5 +100,12 @@ def route_after_agent(state: TicketState) -> str:
 
 
 def finalize_node(state: TicketState) -> dict:
+    """Extracts the final response text.
+
+    Claude 5 models return AIMessage.content as a list of content blocks
+    (e.g. thinking + text) rather than a plain string, so we use the
+    `.text` accessor (extracts just the text blocks) instead of assuming
+    `.content` is already a string.
+    """
     last_message = state["messages"][-1]
-    return {"response": last_message.content}
+    return {"response": last_message.text}

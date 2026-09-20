@@ -28,6 +28,7 @@ load_dotenv()
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from langchain_core.messages import AIMessage, ToolMessage  # noqa: E402
+from app.graph.state import new_turn_state  # noqa: E402
 
 AMBIGUOUS_TICKET = (
     "Please check the account status for students S1001, S1002, and S1003, "
@@ -47,18 +48,7 @@ def main() -> None:
     print(f"agent_module.MAX_ITERATIONS resolved to: {agent_module.MAX_ITERATIONS}\n")
 
     graph = build_graph()
-    result = graph.invoke(
-        {
-            "thread_id": str(uuid.uuid4()),
-            "ticket_text": AMBIGUOUS_TICKET,
-            "category": None,
-            "response": None,
-            "messages": [],
-            "iteration_count": 0,
-            "seen_tool_calls": [],
-            "escalated": False,
-        }
-    )
+    result = graph.invoke(new_turn_state(str(uuid.uuid4()), AMBIGUOUS_TICKET))
 
     print(f"category: {result['category']}")
     print(f"total iterations used: {result['iteration_count']}\n")

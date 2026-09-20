@@ -5,6 +5,7 @@ import pytest
 from langchain_core.messages import ToolMessage
 
 from app.graph.graph import build_graph
+from app.graph.state import new_turn_state
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("ANTHROPIC_API_KEY"),
@@ -14,18 +15,7 @@ pytestmark = pytest.mark.skipif(
 
 def _run(ticket_text: str) -> dict:
     graph = build_graph()
-    return graph.invoke(
-        {
-            "thread_id": str(uuid.uuid4()),
-            "ticket_text": ticket_text,
-            "category": None,
-            "response": None,
-            "messages": [],
-            "iteration_count": 0,
-            "seen_tool_calls": [],
-            "escalated": False,
-        }
-    )
+    return graph.invoke(new_turn_state(str(uuid.uuid4()), ticket_text))
 
 
 def test_account_lookup_triggers_crm_tool_call():

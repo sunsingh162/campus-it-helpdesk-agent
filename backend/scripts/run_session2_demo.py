@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from langchain_core.messages import AIMessage, ToolMessage  # noqa: E402
 
 from app.graph.graph import build_graph  # noqa: E402
+from app.graph.state import new_turn_state  # noqa: E402
 
 SAMPLE_TICKETS = [
     "Can you check if student S1002's account is locked?",
@@ -32,15 +33,7 @@ def main() -> None:
     graph = build_graph()
     for ticket_text in SAMPLE_TICKETS:
         print(f"\n=== Ticket: {ticket_text!r} ===")
-        result = graph.invoke(
-            {
-                "thread_id": str(uuid.uuid4()),
-                "ticket_text": ticket_text,
-                "category": None,
-                "response": None,
-                "messages": [],
-            }
-        )
+        result = graph.invoke(new_turn_state(str(uuid.uuid4()), ticket_text))
         print(f"category: {result['category']}")
 
         tool_calls_seen = False
