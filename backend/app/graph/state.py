@@ -19,6 +19,9 @@ class TicketState(TypedDict):
     escalated: bool
     summary: Optional[str]
     injection_blocked: bool
+    specialist_findings: dict[str, str]
+    next_action: Optional[str]
+    delegation_count: int
 
 
 def new_turn_state(thread_id: str, ticket_text: str) -> TicketState:
@@ -46,4 +49,7 @@ def new_turn_state(thread_id: str, ticket_text: str) -> TicketState:
         "escalated": False,
         "summary": None,
         "injection_blocked": False,
+        "specialist_findings": {},
+        "next_action": None,
+        "delegation_count": 0,
     }
