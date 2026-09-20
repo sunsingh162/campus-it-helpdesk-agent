@@ -6,8 +6,6 @@ process restart: a new process calling run_ticket()/stream_ticket() with the
 same thread_id resumes from whatever the checkpointer last persisted for it.
 """
 
-from langchain_core.messages import HumanMessage
-
 from .graph import build_graph
 from .persistence import get_checkpointer
 from .state import new_turn_state
@@ -35,16 +33,18 @@ def _build_turn_input(graph, thread_id: str, ticket_text: str) -> dict:
         return new_turn_state(thread_id, ticket_text)
 
     # Follow-up turn: only send the delta. category/response/iteration_count/
-    # seen_tool_calls/escalated reset fresh for this new question; messages
-    # history is preserved by the checkpointer and add_messages appends to it.
+    # seen_tool_calls/escalated reset fresh for this new question. messages
+    # is omitted entirely — existing history is preserved by the
+    # checkpointer, and the ingress guardrail node adds this turn's (redacted)
+    # HumanMessage as its own delta once it runs.
     return {
         "ticket_text": ticket_text,
         "category": None,
         "response": None,
-        "messages": [HumanMessage(content=ticket_text)],
         "iteration_count": 0,
         "seen_tool_calls": [],
         "escalated": False,
+        "injection_blocked": False,
     }
 
 

@@ -1,6 +1,5 @@
 from typing import Annotated, Literal, Optional
 
-from langchain_core.messages import HumanMessage
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
@@ -19,6 +18,7 @@ class TicketState(TypedDict):
     seen_tool_calls: list[str]
     escalated: bool
     summary: Optional[str]
+    injection_blocked: bool
 
 
 def new_turn_state(thread_id: str, ticket_text: str) -> TicketState:
@@ -26,18 +26,24 @@ def new_turn_state(thread_id: str, ticket_text: str) -> TicketState:
 
     Used both to start a brand-new thread and to add a follow-up turn onto
     an existing thread — in both cases classify_node re-runs on the new
-    ticket_text, and the add_messages reducer appends the new HumanMessage
-    (and everything the agent does after it) onto whatever history the
-    checkpointer already has for this thread_id.
+    ticket_text, and the add_messages reducer appends whatever the agent
+    does onto whatever history the checkpointer already has for this
+    thread_id.
+
+    messages starts empty here deliberately: the ingress guardrail node is
+    the one that turns ticket_text into a HumanMessage, only after
+    redacting PII from it — so the raw, unredacted text is never what gets
+    persisted into message history or sent to any LLM.
     """
     return {
         "thread_id": thread_id,
         "ticket_text": ticket_text,
         "category": None,
         "response": None,
-        "messages": [HumanMessage(content=ticket_text)],
+        "messages": [],
         "iteration_count": 0,
         "seen_tool_calls": [],
         "escalated": False,
         "summary": None,
+        "injection_blocked": False,
     }
