@@ -6,6 +6,9 @@ process restart: a new process calling run_ticket()/stream_ticket() with the
 same thread_id resumes from whatever the checkpointer last persisted for it.
 """
 
+from langgraph.types import Command
+
+from . import approvals
 from .graph import build_graph
 from .persistence import get_checkpointer
 from .state import new_turn_state
@@ -63,7 +66,9 @@ def run_ticket(thread_id: str, ticket_text: str) -> dict:
     graph = get_compiled_graph()
     config = _config(thread_id)
     turn_input = _build_turn_input(graph, thread_id, ticket_text)
-    return graph.invoke(turn_input, config)
+    result = graph.invoke(turn_input, config)
+    approvals.sync_from_result(thread_id, result)
+    return result
 
 
 def stream_ticket(thread_id: str, ticket_text: str):
@@ -71,3 +76,17 @@ def stream_ticket(thread_id: str, ticket_text: str):
     config = _config(thread_id)
     turn_input = _build_turn_input(graph, thread_id, ticket_text)
     yield from graph.stream(turn_input, config, stream_mode="values")
+
+
+def resolve_approval(thread_id: str, decision: dict) -> dict:
+    """Resumes a paused thread with an explicit approve/deny/edit_and_approve
+    decision. This is the only way a paused write can ever proceed — there's
+    no run_ticket()/stream_ticket() path that bypasses it, since a paused
+    thread's create_ticket_record call is blocked inside hitl_gate_node's
+    interrupt(), which only ever returns a value via Command(resume=...).
+    """
+    graph = get_compiled_graph()
+    config = _config(thread_id)
+    result = graph.invoke(Command(resume=decision), config)
+    approvals.sync_from_result(thread_id, result)
+    return result

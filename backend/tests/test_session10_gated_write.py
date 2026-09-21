@@ -38,10 +38,13 @@ def test_create_ticket_tool_refuses_low_severity():
             "student_id": "",
         }
     )
-    assert result["created"] is False
+    assert result["status"] == "refused"
 
 
-def test_create_ticket_tool_writes_for_medium_severity_and_injects_thread_id():
+def test_create_ticket_tool_drafts_for_medium_severity_without_writing():
+    """As of Session 11, the tool never writes — it only drafts a proposal
+    for hitl_gate_node to act on after an explicit approval decision. See
+    test_session11_hitl.py for the actual write path."""
     thread_id = str(uuid.uuid4())
     result = create_ticket.invoke(
         {
@@ -52,8 +55,9 @@ def test_create_ticket_tool_writes_for_medium_severity_and_injects_thread_id():
         },
         config={"configurable": {"thread_id": thread_id}},
     )
-    assert result["created"] is True
-    assert count_tickets_for_thread(thread_id) == 1
+    assert result["status"] == "pending_approval"
+    assert result["draft"]["thread_id"] == thread_id
+    assert count_tickets_for_thread(thread_id) == 0  # nothing written yet
 
 
 def test_submitting_the_same_request_twice_produces_exactly_one_write():

@@ -1,23 +1,15 @@
-"""Session 9: parallel specialists.
+"""Session 11: human-in-the-loop approval.
 
-The master graph's dispatch mechanism evolves from Session 8's sequential
-supervisor loop to a real parallel fan-out: determine_categories decides the
-relevant category set once, dispatch_to_specialists (a conditional-edge path
-function) returns one Send per category — all of which run concurrently in
-a single superstep — and a synthesizer node reads every finding once they've
-all completed, filters out anything not relevant to this turn, and produces
-one unified response.
-
-specialist_findings needed a real reducer (merge_findings, in state.py) for
-this to be safe: multiple parallel branches now write to it in the same
-superstep, which a plain dict field can't handle without raising a
-LangGraph InvalidUpdateError.
-
-Session 8's supervisor_node/specialist_worker_node/finalize_from_findings_node
-are untouched and still fully tested (tests/test_session8_supervisor.py) —
-this session's master graph just wires the newer parallel path in instead,
-the same way Session 8 wired around Session 7's plain specialist dispatch
-without deleting the specialist subgraph it depends on.
+hitl_gate_node sits between the parallel specialist dispatch and the
+synthesizer. It's a node native to THIS graph — not invoked via a nested
+subgraph .invoke() the way specialist dispatch is — which matters: interrupt()
+only pauses the specific compiled graph it's called within, and this is the
+graph the FastAPI layer actually calls run_ticket()/get_state() on. The
+create_ticket tool (used inside the nested specialist subgraph) no longer
+writes anything itself — it only drafts a proposal — so hitl_gate_node's
+call to ticket_store.create_ticket_record is the ONLY place in this project
+that write ever actually happens, and it's unreachable without first going
+through interrupt() and an explicit Command(resume=...) decision.
 """
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -30,6 +22,7 @@ from .nodes.dispatcher import (
     synthesizer_node,
 )
 from .nodes.guardrails import egress_guardrail_node
+from .nodes.hitl import hitl_gate_node
 from .state import TicketState
 from .subgraphs.triage import build_triage_subgraph
 
@@ -44,6 +37,7 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
     graph.add_node("triage", build_triage_subgraph())
     graph.add_node("determine_categories", determine_categories_node)
     graph.add_node("parallel_specialist_worker", parallel_specialist_worker_node)
+    graph.add_node("hitl_gate", hitl_gate_node)
     graph.add_node("synthesizer", synthesizer_node)
     graph.add_node("egress", egress_guardrail_node)
 
@@ -54,7 +48,8 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
         {"egress": "egress", "determine_categories": "determine_categories"},
     )
     graph.add_conditional_edges("determine_categories", dispatch_to_specialists, ["parallel_specialist_worker"])
-    graph.add_edge("parallel_specialist_worker", "synthesizer")
+    graph.add_edge("parallel_specialist_worker", "hitl_gate")
+    graph.add_edge("hitl_gate", "synthesizer")
     graph.add_edge("synthesizer", "egress")
     graph.add_edge("egress", END)
 

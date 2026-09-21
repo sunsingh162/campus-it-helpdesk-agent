@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from ..state import TicketState
 from ..subgraphs.specialist import build_specialist_subgraph
+from .hitl import extract_pending_write
 
 logger = logging.getLogger("dispatcher")
 
@@ -117,10 +118,17 @@ def parallel_specialist_worker_node(state: TicketState) -> dict:
 
     new_messages = result["messages"][len(prior_messages):]
 
-    return {
+    update: dict = {
         "specialist_findings": {category: result["response"]},
         "messages": new_messages,
     }
+
+    pending_draft = extract_pending_write(new_messages)
+    if pending_draft:
+        logger.info("[parallel] %s specialist drafted a pending ticket, awaiting approval", category)
+        update["pending_writes"] = {category: pending_draft}
+
+    return update
 
 
 class SynthesizedResponse(BaseModel):
@@ -132,29 +140,54 @@ class SynthesizedResponse(BaseModel):
 SYNTHESIZER_SYSTEM_PROMPT = (
     "You are the final response synthesizer for a campus IT helpdesk. Multiple "
     "specialists investigated this ticket in parallel and each produced a "
-    "finding. Read all findings, filter out anything irrelevant or redundant, "
-    "and write ONE unified, coherent response to the student that addresses "
-    "everything relevant without repeating the specialists' internal "
-    "reasoning verbatim."
+    "finding. Read all findings (and any ticket write outcomes — approved, "
+    "denied, or refused as unnecessary), filter out anything irrelevant or "
+    "redundant, and write ONE unified, coherent response to the student that "
+    "addresses everything relevant without repeating the specialists' "
+    "internal reasoning verbatim. If a ticket was approved, say so and give "
+    "the ticket id; if denied, say a staff reviewer declined it."
 )
 
 
+def _describe_outcome(outcome: dict) -> str:
+    action = outcome.get("action")
+    result = outcome.get("result") or {}
+    if action == "deny":
+        return "a staff reviewer denied filing this ticket."
+    if action in ("approve", "edit_and_approve"):
+        return f"ticket #{result.get('ticket_id')} was created (created={result.get('created')})."
+    return f"outcome: {outcome}"
+
+
 def synthesizer_node(state: TicketState) -> dict:
-    """Filters specialist_findings down to this turn's dispatch_categories
-    (dropping any stale entry from an earlier, unrelated turn — see
-    state.merge_findings for why the dict itself is never reset), then
-    synthesizes one unified response.
+    """Filters specialist_findings/write_outcomes down to this turn's
+    dispatch_categories (dropping any stale entry from an earlier, unrelated
+    turn — see state.merge_findings for why the dicts themselves are never
+    reset), then synthesizes one unified response.
     """
     all_findings = state.get("specialist_findings") or {}
+    all_outcomes = state.get("write_outcomes") or {}
     relevant_categories = state.get("dispatch_categories") or []
+
     relevant_findings = {
         category: text for category, text in all_findings.items() if category in relevant_categories and text
     }
+    relevant_outcomes = {
+        category: outcome for category, outcome in all_outcomes.items() if category in relevant_categories
+    }
 
     findings_text = "\n\n".join(f"[{category}] {text}" for category, text in relevant_findings.items())
+    outcomes_text = "\n".join(
+        f"[{category}] {_describe_outcome(outcome)}" for category, outcome in relevant_outcomes.items()
+    )
+
+    human_content = f"Ticket: {state['ticket_text']}\n\nSpecialist findings:\n{findings_text}"
+    if outcomes_text:
+        human_content += f"\n\nTicket write outcomes:\n{outcomes_text}"
+
     prompt = [
         SystemMessage(content=SYNTHESIZER_SYSTEM_PROMPT),
-        HumanMessage(content=f"Ticket: {state['ticket_text']}\n\nSpecialist findings:\n{findings_text}"),
+        HumanMessage(content=human_content),
     ]
     result = get_synthesizer_llm().with_structured_output(SynthesizedResponse).invoke(prompt)
     return {"response": result.response}

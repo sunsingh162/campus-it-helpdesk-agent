@@ -22,6 +22,29 @@ def merge_findings(existing: dict[str, str], new: dict[str, str]) -> dict[str, s
     return {**(existing or {}), **(new or {})}
 
 
+def merge_pending_writes(existing: dict, new: dict) -> dict:
+    """Reducer for pending_writes. A category mapped to None is a clear
+    signal — mirrors how RemoveMessage lets add_messages delete instead of
+    append. (A custom sentinel *object* doesn't work here: every state
+    update has to survive the checkpointer's msgpack serialization, and an
+    arbitrary class instance isn't serializable — None is, so it's the
+    sentinel.)
+
+    Unlike specialist_findings, a stale pending_writes entry is a real bug
+    risk, not just cosmetic: if a resolved (approved/denied) draft just sat
+    there forever, a later, unrelated turn touching the same category could
+    get re-prompted for an approval that was already handled. hitl_gate_node
+    clears each entry the moment it resolves it.
+    """
+    merged = dict(existing or {})
+    for category, value in (new or {}).items():
+        if value is None:
+            merged.pop(category, None)
+        else:
+            merged[category] = value
+    return merged
+
+
 class TicketState(TypedDict):
     """State for a single Campus IT Helpdesk ticket."""
 
@@ -40,6 +63,8 @@ class TicketState(TypedDict):
     delegation_count: int
     dispatch_categories: list[str]
     target_category: Optional[str]
+    pending_writes: Annotated[dict[str, dict], merge_pending_writes]
+    write_outcomes: Annotated[dict[str, dict], merge_findings]
 
 
 def new_turn_state(thread_id: str, ticket_text: str) -> TicketState:
@@ -72,4 +97,6 @@ def new_turn_state(thread_id: str, ticket_text: str) -> TicketState:
         "delegation_count": 0,
         "dispatch_categories": [],
         "target_category": None,
+        "pending_writes": {},
+        "write_outcomes": {},
     }

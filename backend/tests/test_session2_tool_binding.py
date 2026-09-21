@@ -19,7 +19,13 @@ def _run(ticket_text: str) -> dict:
 
 
 def test_account_lookup_triggers_crm_tool_call():
-    result = _run("Can you check if student S1002's account is locked?")
+    # S1001 (unlike S1002) isn't locked in the mock CRM data — this test is
+    # about tool binding, not the Session 11 approval gate. A medium+
+    # severity ticket (e.g. discovering a locked account) would pause here
+    # via interrupt() instead of completing, since build_graph() has no
+    # checkpointer in this test.
+    result = _run("Can you check the status of student S1001's account?")
+    assert not result.get("__interrupt__"), "unexpectedly hit the HITL approval gate"
     tool_messages = [m for m in result["messages"] if isinstance(m, ToolMessage)]
     assert any(m.name == "lookup_student_account" for m in tool_messages)
     assert result["response"]
