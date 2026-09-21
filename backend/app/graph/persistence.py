@@ -11,9 +11,12 @@ import sqlite3
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
+from ..paths import resolve_data_path
+
 
 def get_checkpointer(db_path: str | None = None) -> SqliteSaver:
-    path = db_path or os.getenv("CHECKPOINT_DB_PATH", "backend/data/checkpoints.db")
+    raw_path = db_path or os.getenv("CHECKPOINT_DB_PATH", "backend/data/checkpoints.db")
+    path = resolve_data_path(raw_path)
     directory = os.path.dirname(path)
     if directory:
         os.makedirs(directory, exist_ok=True)

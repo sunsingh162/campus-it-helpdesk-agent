@@ -12,15 +12,18 @@ import json
 import os
 import sqlite3
 
+from ..paths import resolve_data_path
+
 
 def _default_db_path() -> str:
-    checkpoint_path = os.getenv("CHECKPOINT_DB_PATH", "backend/data/checkpoints.db")
+    checkpoint_path = resolve_data_path(os.getenv("CHECKPOINT_DB_PATH", "backend/data/checkpoints.db"))
     directory = os.path.dirname(checkpoint_path)
     return os.path.join(directory, "approvals.db") if directory else "approvals.db"
 
 
 def _get_connection(db_path: str | None = None) -> sqlite3.Connection:
-    path = db_path or os.getenv("APPROVALS_DB_PATH") or _default_db_path()
+    raw_path = db_path or os.getenv("APPROVALS_DB_PATH") or _default_db_path()
+    path = resolve_data_path(raw_path)
     directory = os.path.dirname(path)
     if directory:
         os.makedirs(directory, exist_ok=True)
