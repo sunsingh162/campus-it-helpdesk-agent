@@ -1,14 +1,17 @@
+import json
 from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 load_dotenv()
 
 from .graph import approvals  # noqa: E402
-from .graph.runner import resolve_approval, run_ticket  # noqa: E402
+from .graph.forensics import state_forensics  # noqa: E402
+from .graph.runner import get_compiled_graph, resolve_approval, run_ticket, stream_ticket  # noqa: E402
 
 app = FastAPI(title="Campus IT Helpdesk Agent")
 
@@ -40,6 +43,16 @@ class EditAndApproveRequest(BaseModel):
     edited_fields: Optional[dict] = None
 
 
+class TimelineEntryResponse(BaseModel):
+    checkpoint_id: str
+    next: list[str]
+    category: Optional[str]
+    response: Optional[str]
+    iteration_count: int
+    escalated: bool
+    anomalies: list[str]
+
+
 def _to_ticket_response(thread_id: str, result: dict) -> TicketResponse:
     return TicketResponse(
         thread_id=thread_id,
@@ -59,6 +72,20 @@ def health() -> dict:
 def run(payload: TicketRequest) -> TicketResponse:
     result = run_ticket(payload.thread_id, payload.message)
     return _to_ticket_response(payload.thread_id, result)
+
+
+@app.post("/tickets/stream")
+def stream(payload: TicketRequest) -> StreamingResponse:
+    def event_generator():
+        for state in stream_ticket(payload.thread_id, payload.message):
+            chunk = {
+                "category": state.get("category"),
+                "response": state.get("response"),
+                "pending_approval": bool(state.get("__interrupt__")),
+            }
+            yield json.dumps(chunk) + "\n"
+
+    return StreamingResponse(event_generator(), media_type="application/x-ndjson")
 
 
 @app.get("/pending-approvals")
@@ -83,3 +110,21 @@ def edit_approve(thread_id: str, payload: EditAndApproveRequest) -> TicketRespon
     decision = {"action": "edit_and_approve", "edited_fields": payload.edited_fields or {}}
     result = resolve_approval(thread_id, decision)
     return _to_ticket_response(thread_id, result)
+
+
+@app.get("/forensics/{thread_id}", response_model=list[TimelineEntryResponse])
+def forensics(thread_id: str) -> list[TimelineEntryResponse]:
+    graph = get_compiled_graph()
+    timeline = state_forensics(graph, thread_id)
+    return [
+        TimelineEntryResponse(
+            checkpoint_id=entry.checkpoint_id,
+            next=list(entry.next),
+            category=entry.category,
+            response=entry.response,
+            iteration_count=entry.iteration_count,
+            escalated=entry.escalated,
+            anomalies=entry.anomalies,
+        )
+        for entry in timeline
+    ]

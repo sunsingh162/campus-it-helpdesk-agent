@@ -75,7 +75,12 @@ def stream_ticket(thread_id: str, ticket_text: str):
     graph = get_compiled_graph()
     config = _config(thread_id)
     turn_input = _build_turn_input(graph, thread_id, ticket_text)
-    yield from graph.stream(turn_input, config, stream_mode="values")
+    last_state = None
+    for state in graph.stream(turn_input, config, stream_mode="values"):
+        last_state = state
+        yield state
+    if last_state is not None:
+        approvals.sync_from_result(thread_id, last_state)
 
 
 def resolve_approval(thread_id: str, decision: dict) -> dict:
