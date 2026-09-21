@@ -102,8 +102,10 @@ def parallel_specialist_worker_node(state: TicketState) -> dict:
         "messages": prior_messages + [dispatch_message],
     }
 
+    # thread_id passed through explicitly — this nested compiled graph does
+    # NOT automatically inherit the outer master graph's invoke() config.
     start = time.monotonic()
-    result = get_specialist_graph().invoke(sub_state)
+    result = get_specialist_graph().invoke(sub_state, {"configurable": {"thread_id": state["thread_id"]}})
     elapsed = time.monotonic() - start
 
     logger.info(

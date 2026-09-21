@@ -133,7 +133,11 @@ def specialist_worker_node(state: TicketState) -> dict:
         "messages": prior_messages + [dispatch_message],
     }
 
-    result = get_specialist_graph().invoke(sub_state)
+    # Passing thread_id through explicitly: this is a separate compiled
+    # graph object, so it does NOT automatically inherit the outer master
+    # graph's invoke() config — any bound tool needing thread_id (e.g. a
+    # gated write tool's idempotency key) would otherwise see none.
+    result = get_specialist_graph().invoke(sub_state, {"configurable": {"thread_id": state["thread_id"]}})
 
     findings = dict(state.get("specialist_findings") or {})
     findings[category] = result["response"]

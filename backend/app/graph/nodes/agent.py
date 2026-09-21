@@ -7,9 +7,10 @@ from langchain_core.messages import AIMessage, SystemMessage
 from ...tools.crm import lookup_student_account
 from ...tools.kb import search_kb
 from ...tools.severity import assess_severity
+from ...tools.write_ticket import create_ticket
 from ..state import TicketState
 
-TOOLS = [lookup_student_account, search_kb, assess_severity]
+TOOLS = [lookup_student_account, search_kb, assess_severity, create_ticket]
 
 MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "6"))
 
@@ -30,9 +31,11 @@ SYSTEM_PROMPT = (
     "Use lookup_student_account to check the student's account/device status "
     "when a student ID is available or relevant, use search_kb to find "
     "troubleshooting steps, and use assess_severity once you understand the "
-    "request to determine how urgent/sensitive it is. Give one concise, "
-    "helpful final response once you have what you need — do not call the "
-    "same tool with the same arguments more than once."
+    "request to determine how urgent/sensitive it is. If assess_severity comes "
+    "back medium or higher, use create_ticket to file it for staff follow-up "
+    "— don't file a ticket for routine, fully self-service issues. Give one "
+    "concise, helpful final response once you have what you need — do not "
+    "call the same tool with the same arguments more than once."
 )
 
 
