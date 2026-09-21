@@ -45,6 +45,10 @@
 <button onclick="loadApprovals()">Refresh</button>
 <div id="approvalsList"></div>
 
+<h2>Recent decisions</h2>
+<p class="muted">Results of approve/deny/edit-approve actions — kept here since a resolved card disappears from Pending approvals right away.</p>
+<div id="decisionLog"></div>
+
 <script>
 function apiBase() { return document.getElementById('apiBase').value.replace(/\/$/, ''); }
 
@@ -128,13 +132,20 @@ async function decide(threadId, action, buttonEl) {
   }
 
   buttonEl.disabled = true;
+  const log = document.getElementById('decisionLog');
   try {
     const res = await fetch(url, options);
     const data = await res.json();
-    card.insertAdjacentHTML('beforeend', `<pre>${JSON.stringify(data, null, 2)}</pre>`);
+    // Logged separately (not inside the card) because loadApprovals() below
+    // rebuilds the pending list right after — a resolved card disappears
+    // from it immediately, which would wipe out a result shown inline.
+    log.insertAdjacentHTML(
+      'afterbegin',
+      `<div class="approval-card"><strong>${action}</strong> on thread <code>${threadId}</code><pre>${JSON.stringify(data, null, 2)}</pre></div>`
+    );
     loadApprovals();
   } catch (err) {
-    card.insertAdjacentHTML('beforeend', `<p class="muted">Error: ${err.message}</p>`);
+    log.insertAdjacentHTML('afterbegin', `<p class="muted">Error deciding on ${threadId}: ${err.message}</p>`);
   }
 }
 
