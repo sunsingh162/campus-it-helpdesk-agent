@@ -33,10 +33,17 @@ def _build_turn_input(graph, thread_id: str, ticket_text: str) -> dict:
         return new_turn_state(thread_id, ticket_text)
 
     # Follow-up turn: only send the delta. category/response/iteration_count/
-    # seen_tool_calls/escalated reset fresh for this new question. messages
-    # is omitted entirely — existing history is preserved by the
-    # checkpointer, and the ingress guardrail node adds this turn's (redacted)
-    # HumanMessage as its own delta once it runs.
+    # seen_tool_calls/escalated/next_action/delegation_count/dispatch_categories
+    # reset fresh for this new question. messages is omitted entirely —
+    # existing history is preserved by the checkpointer, and the ingress
+    # guardrail node adds this turn's (redacted) HumanMessage as its own
+    # delta once it runs.
+    #
+    # specialist_findings is deliberately NOT reset here — it's a
+    # merge-reducer field (see state.merge_findings) that can only combine,
+    # never replace, so old entries just sit unused. The synthesizer filters
+    # findings down to this turn's dispatch_categories, so stale entries
+    # from an earlier question never leak into a new response.
     return {
         "ticket_text": ticket_text,
         "category": None,
@@ -45,6 +52,10 @@ def _build_turn_input(graph, thread_id: str, ticket_text: str) -> dict:
         "seen_tool_calls": [],
         "escalated": False,
         "injection_blocked": False,
+        "next_action": None,
+        "delegation_count": 0,
+        "dispatch_categories": [],
+        "target_category": None,
     }
 
 

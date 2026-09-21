@@ -1,58 +1,61 @@
-"""Session 8: the supervisor orchestrator.
+"""Session 9: parallel specialists.
 
-The direct triage -> specialist dispatch from Session 7 is replaced by a
-supervisor loop: supervisor picks a specialist (or FINISH), specialist_worker
-dispatches to the Session 7 specialist subgraph scoped to that category and
-always returns to the supervisor — no worker routes directly to END. A
-MAX_DELEGATIONS cap (checked before every supervisor LLM call) prevents
-runaway delegation.
+The master graph's dispatch mechanism evolves from Session 8's sequential
+supervisor loop to a real parallel fan-out: determine_categories decides the
+relevant category set once, dispatch_to_specialists (a conditional-edge path
+function) returns one Send per category — all of which run concurrently in
+a single superstep — and a synthesizer node reads every finding once they've
+all completed, filters out anything not relevant to this turn, and produces
+one unified response.
 
-No state field is written by more than one node concurrently yet, so
-there's still nothing to switch to an operator.add reducer — that becomes
-necessary in Session 9, when parallel specialists write findings to
-specialist_findings at the same time instead of one at a time.
+specialist_findings needed a real reducer (merge_findings, in state.py) for
+this to be safe: multiple parallel branches now write to it in the same
+superstep, which a plain dict field can't handle without raising a
+LangGraph InvalidUpdateError.
+
+Session 8's supervisor_node/specialist_worker_node/finalize_from_findings_node
+are untouched and still fully tested (tests/test_session8_supervisor.py) —
+this session's master graph just wires the newer parallel path in instead,
+the same way Session 8 wired around Session 7's plain specialist dispatch
+without deleting the specialist subgraph it depends on.
 """
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
-from .nodes.guardrails import egress_guardrail_node
-from .nodes.supervisor import (
-    finalize_from_findings_node,
-    route_after_supervisor,
-    specialist_worker_node,
-    supervisor_node,
+from .nodes.dispatcher import (
+    determine_categories_node,
+    dispatch_to_specialists,
+    parallel_specialist_worker_node,
+    synthesizer_node,
 )
+from .nodes.guardrails import egress_guardrail_node
 from .state import TicketState
 from .subgraphs.triage import build_triage_subgraph
 
 
 def route_after_triage(state: TicketState) -> str:
-    return "egress" if state.get("injection_blocked") else "supervisor"
+    return "egress" if state.get("injection_blocked") else "determine_categories"
 
 
 def build_graph(checkpointer: BaseCheckpointSaver | None = None):
     graph = StateGraph(TicketState)
 
     graph.add_node("triage", build_triage_subgraph())
-    graph.add_node("supervisor", supervisor_node)
-    graph.add_node("specialist_worker", specialist_worker_node)
-    graph.add_node("finalize_from_findings", finalize_from_findings_node)
+    graph.add_node("determine_categories", determine_categories_node)
+    graph.add_node("parallel_specialist_worker", parallel_specialist_worker_node)
+    graph.add_node("synthesizer", synthesizer_node)
     graph.add_node("egress", egress_guardrail_node)
 
     graph.add_edge(START, "triage")
     graph.add_conditional_edges(
         "triage",
         route_after_triage,
-        {"egress": "egress", "supervisor": "supervisor"},
+        {"egress": "egress", "determine_categories": "determine_categories"},
     )
-    graph.add_conditional_edges(
-        "supervisor",
-        route_after_supervisor,
-        {"specialist_worker": "specialist_worker", "finalize": "finalize_from_findings"},
-    )
-    graph.add_edge("specialist_worker", "supervisor")
-    graph.add_edge("finalize_from_findings", "egress")
+    graph.add_conditional_edges("determine_categories", dispatch_to_specialists, ["parallel_specialist_worker"])
+    graph.add_edge("parallel_specialist_worker", "synthesizer")
+    graph.add_edge("synthesizer", "egress")
     graph.add_edge("egress", END)
 
     return graph.compile(checkpointer=checkpointer)
